@@ -1,6 +1,6 @@
 ![The PCB](https://github.com/ezcGman/tiny-power-meter/blob/master/pictures/Tiny-Power-Meter-v1r1-render-front.png?raw=true)
 
-# LoRA Washing Machine & Dryer Sensor
+# Tiny 3-phase power meter
 A very tiny ESP8266 based PCB to monitor your apartments / homes power consumption using CT clamps and report the reading to Home Assistant using ESPHome!
 
 ## Credits
