@@ -1,0 +1,173 @@
+substitutions:
+  update_time: 10s
+
+esphome:
+  name: esph-apt-power-meter
+
+esp8266:
+  board: esp12e
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "REPLACE_WITH_SOMETHING"
+
+ota:
+  password: "REPLACE_WITH_SOMETHING"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Esph-Apt-Power-Meter"
+    password: "REPLACE_WITH_SOMETHING"
+
+mqtt:
+  broker: YOUR_MQTT_BROKER_IP
+  port: YOUR_MQTT_BROKER_PORT
+  username: YOUR_MQTT_BROKER_USER
+  password: !secret mqtt_password
+
+captive_portal:
+
+web_server:
+  port: 80
+
+# Define s0 to s4 pins. Out multiplexer only has s0 to s2, but this component was made
+# for a 16 bit multiplexer, so it has four control pins. So set it to an IO we don't use.    
+cd74hc4067:
+  - id: cd74hc4067_1
+    pin_s0: 4
+    pin_s1: 5
+    pin_s2: 2
+    pin_s3: 12
+
+# Turn the multiplexer on by pulling IO16 LOW 
+switch:
+  - platform: gpio
+    internal: True
+    pin: 16
+    name: "Enable Multiplexer"
+    restore_mode: ALWAYS_OFF
+
+
+sensor:
+  # Read the voltage from the Shelly 1PM in the fuse box
+  - platform: mqtt_subscribe
+    internal: True
+    name: "Apartment Voltage"
+    id: apartment_voltage
+    topic: home-assistant/shellyplus1pm-a8032abb50dc/voltage
+    accuracy_decimals: 1
+    device_class: "voltage"
+    state_class: "measurement"
+
+  # Our single ADC pin / sensor
+  - platform: adc
+    id: adc_sensor
+    pin: A0
+
+  # Define the multiplexer inputs. Whenever one of these sensors value is requested
+  # it will switch to that input and trigger the ADC sensor to read the value
+  - platform: cd74hc4067
+    id: ct_1_raw
+    number: 0
+    sensor: adc_sensor
+  - platform: cd74hc4067
+    id: ct_2_raw
+    number: 1
+    sensor: adc_sensor
+  - platform: cd74hc4067
+    id: ct_3_raw
+    number: 2
+    sensor: adc_sensor
+
+  # Out actual CT clamp sensors that don't have the ADC sensor as input, but one of the
+  # multiplexer sensors above. Providing usage in amps.
+  - platform: ct_clamp
+    id: ct_1_amps
+    name: "Apartment Phase 1 Current"
+    sensor: ct_1_raw
+    update_interval: ${update_time}
+    filters:
+      - calibrate_linear:
+        # Measured value of 0 maps to 0A
+        - 0 -> 0
+        # Known load: 2.54A
+        # Value shown in logs: 0.0154A
+        - 0.0154 -> 2.54
+  - platform: ct_clamp
+    id: ct_2_amps
+    name: "Apartment Phase 2 Current"
+    sensor: ct_2_raw
+    update_interval: ${update_time}
+    filters:
+      - calibrate_linear:
+        # Measured value of 0 maps to 0A
+        - 0 -> 0
+        # Known load: 2.53A
+        # Value shown in logs: 0.0151A
+        - 0.0151 -> 2.53
+  - platform: ct_clamp
+    id: ct_3_amps
+    name: "Apartment Phase 3 Current"
+    sensor: ct_3_raw
+    update_interval: ${update_time}
+    filters:
+      - calibrate_linear:
+        # Measured value of 0 maps to 0A
+        - 0 -> 0
+        # Known load: 2.53A
+        # Value shown in logs: 0.0149A
+        - 0.0149 -> 2.53
+  # Total apartment usage sensor, providing value in amps
+  - platform: template
+    name: "Apartment Total Current"
+    id: total_amps
+    lambda: return id(ct_1_amps).state + id(ct_2_amps).state + id(ct_3_amps).state;
+    accuracy_decimals: 2
+    unit_of_measurement: A
+    device_class: current
+    update_interval: ${update_time}
+
+  # Create wattage sensors that we will use to build a kWh sensor HA will find and use in the Energy Dashboard
+  - platform: template
+    name: "Apartment Phase 1 Watts"
+    id: phase_1_watts
+    lambda: return id(ct_1_amps).state * id(apartment_voltage).state;
+    accuracy_decimals: 2
+    unit_of_measurement: W
+    device_class: power
+    update_interval: ${update_time}
+  - platform: template
+    name: "Apartment Phase 2 Watts"
+    id: phase_2_watts
+    lambda: return id(ct_2_amps).state * id(apartment_voltage).state;
+    accuracy_decimals: 2
+    unit_of_measurement: W
+    device_class: power
+    update_interval: ${update_time}
+  - platform: template
+    name: "Apartment Phase 3 Watts"
+    id: phase_3_watts
+    lambda: return id(ct_3_amps).state * id(apartment_voltage).state;
+    accuracy_decimals: 2
+    unit_of_measurement: W
+    device_class: power
+    update_interval: ${update_time}
+  # Total apartment usage sensor, providing value in watts
+  - platform: template
+    name: "Apartment Total Watts"
+    id: total_watts
+    lambda: return id(total_amps).state * id(apartment_voltage).state;
+    accuracy_decimals: 1
+    unit_of_measurement: W
+    device_class: power
+    update_interval: ${update_time}
+
+# kWh sensors that HA will find and use will be created in HA: https://www.home-assistant.io/integrations/integration/#energy
